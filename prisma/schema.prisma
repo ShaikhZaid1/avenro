@@ -1,0 +1,149 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL") // pooled connection (app)
+  directUrl = env("DIRECT_URL")   // direct connection (migrations)
+}
+
+enum Role {
+  CUSTOMER
+  ADMIN
+}
+
+enum PaymentMethod {
+  RAZORPAY
+  COD
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  NEW
+  PACKED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  RTO
+}
+
+model User {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  phone        String?   @unique
+  passwordHash String
+  role         Role      @default(CUSTOMER)
+  createdAt    DateTime  @default(now())
+  addresses    Address[]
+  orders       Order[]
+  cartItems    CartItem[]
+}
+
+model Address {
+  id      String @id @default(cuid())
+  userId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name    String
+  phone   String
+  line1   String
+  line2   String?
+  city    String
+  state   String
+  pincode String
+  @@index([userId])
+}
+
+model Category {
+  id       String    @id @default(cuid())
+  name     String    @unique
+  slug     String    @unique
+  products Product[]
+}
+
+// All money is stored in paise (Int). Rs 1,799 = 179900. Razorpay also uses paise.
+model Product {
+  id          String           @id @default(cuid())
+  name        String
+  slug        String           @unique
+  description String
+  price       Int
+  images      String[]         // Cloudinary URLs
+  isActive    Boolean          @default(true) // admin can hide a product
+  categoryId  String
+  category    Category         @relation(fields: [categoryId], references: [id])
+  variants    ProductVariant[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  @@index([categoryId])
+}
+
+// Stock lives here, per size and colour.
+model ProductVariant {
+  id         String      @id @default(cuid())
+  productId  String
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  size       String
+  color      String
+  sku        String      @unique
+  stock      Int         @default(0)
+  cartItems  CartItem[]
+  orderItems OrderItem[]
+  @@unique([productId, size, color])
+}
+
+model CartItem {
+  id        String         @id @default(cuid())
+  userId    String
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  variantId String
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  quantity  Int
+  @@unique([userId, variantId])
+}
+
+model Order {
+  id                 String        @id @default(cuid())
+  orderNumber        String        @unique // e.g. AV-100234
+  userId             String
+  user               User          @relation(fields: [userId], references: [id])
+  shippingAddress    Json          // snapshot, so later address edits don't change old orders
+  subtotal           Int
+  shippingFee        Int           @default(0)
+  total              Int
+  paymentMethod      PaymentMethod
+  paymentStatus      PaymentStatus @default(PENDING)
+  orderStatus        OrderStatus   @default(PENDING_PAYMENT)
+  razorpayOrderId    String?       @unique
+  razorpayPaymentId  String?       @unique // unique = webhook + frontend can't confirm twice
+  shiprocketOrderId  String?
+  awbNumber          String?
+  courier            String?
+  trackingUrl        String?
+  items              OrderItem[]
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  @@index([userId])
+  @@index([orderStatus])
+}
+
+model OrderItem {
+  id        String         @id @default(cuid())
+  orderId   String
+  order     Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variantId String
+  variant   ProductVariant @relation(fields: [variantId], references: [id])
+  name      String         // snapshot of product name
+  size      String
+  color     String
+  quantity  Int
+  price     Int            // price at purchase, in paise
+}
